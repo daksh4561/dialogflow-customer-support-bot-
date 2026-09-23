@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>CardCare Assistant</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --border: #2a2e38;
+    --text: #e6e8eb; --muted: #9aa1ac; --accent: #4f8cff; --success: #4caf7d;
+  }
+  * { box-sizing: border-box; }
+  html, body { overflow-x: hidden; }
+  body {
+    margin: 0; height: 100vh; display: flex; flex-direction: column;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--bg); color: var(--text);
+  }
+  header {
+    padding: 18px 24px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between; flex-shrink: 0;
+  }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .brand-mark {
+    width: 34px; height: 34px; border-radius: 9px;
+    background: linear-gradient(135deg, #4f8cff, #7c5cff);
+    display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 15px;
+  }
+  .brand h1 { font-size: 15px; margin: 0; }
+  .brand p { font-size: 12px; color: var(--muted); margin: 0; }
+  .status-pill {
+    font-size: 12px; color: var(--success); background: #16261e;
+    border: 1px solid #234a34; padding: 4px 12px; border-radius: 20px;
+  }
+  .chat-area {
+    flex: 1; overflow-y: auto; overflow-x: hidden; padding: 24px;
+    display: flex; flex-direction: column; gap: 14px;
+    max-width: 720px; margin: 0 auto; width: 100%;
+  }
+  .msg { display: flex; width: 100%; }
+  .msg.bot { justify-content: flex-start; }
+  .msg.user { justify-content: flex-end; }
+  .msg-content { display: inline-block; max-width: min(75%, 480px); }
+  .bubble {
+    display: inline-block;
+    padding: 12px 16px; border-radius: 16px; font-size: 14px; line-height: 1.4;
+    word-wrap: break-word;
+  }
+  .msg.bot .bubble { background: var(--panel); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+  .msg.user .bubble { background: var(--accent); color: white; border-bottom-right-radius: 4px; }
+  .quick-replies {
+    display: flex; gap: 10px; flex-wrap: wrap; padding: 4px 24px 4px;
+    max-width: 720px; margin: 0 auto; width: 100%;
+  }
+  .chip {
+    background: var(--panel); border: 1px solid var(--border); color: var(--text);
+    padding: 10px 16px; border-radius: 20px; font-size: 13px; cursor: pointer;
+  }
+  .chip:hover { border-color: var(--accent); }
+  .input-bar {
+    border-top: 1px solid var(--border); padding: 16px 24px; flex-shrink: 0;
+    display: flex; gap: 10px; max-width: 720px; margin: 0 auto; width: 100%;
+  }
+  .input-bar input {
+    flex: 1; padding: 12px 16px; border-radius: 24px; border: 1px solid var(--border);
+    background: var(--panel); color: var(--text); font-size: 14px; outline: none;
+  }
+  .input-bar input:focus { border-color: var(--accent); }
+  .input-bar button {
+    background: var(--accent); color: white; border: none; width: 44px; height: 44px;
+    border-radius: 50%; cursor: pointer; font-size: 16px; flex-shrink: 0;
+  }
+  .input-bar button:hover { opacity: 0.9; }
+  .input-bar button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .typing { color: var(--muted); font-size: 13px; font-style: italic; padding: 0 24px; max-width: 720px; margin: 0 auto; width: 100%; }
+  footer { text-align: center; font-size: 11px; color: var(--muted); padding: 10px; flex-shrink: 0; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <div class="brand-mark">CC</div>
+    <div>
+      <h1>CardCare Assistant</h1>
+      <p>Powered by Dialogflow NLU · Fee reversals · Limit increases · Card replacement</p>
+    </div>
+  </div>
+  <div class="status-pill">● Live</div>
+</header>
+
+<div class="chat-area" id="chat-area"></div>
+<div class="typing" id="typing" style="visibility:hidden;">CardCare Assistant is typing...</div>
+<div class="quick-replies" id="quick-replies"></div>
+
+<div class="input-bar">
+  <input id="user-input" type="text" placeholder="Type a message..." onkeydown="if(event.key==='Enter') handleUserInput()">
+  <button id="send-btn" onclick="handleUserInput()">➤</button>
+</div>
+
+<footer>Card Servicing Agent — demo build. Real NLU via Dialogflow. All data is simulated.</footer>
+
+<script>
+const API_BASE = "http://localhost:8000";
+function newSessionId() {
+  return "webchat-" + Math.random().toString(36).slice(2) + "-" + Date.now();
+}
+let sessionId = newSessionId();
+let isSubmitting = false;
+let hasActiveRequest = false;
+
+const GREETING_WORDS = ["hi", "hello", "hey", "hiya", "good morning", "good afternoon", "good evening"];
+const THANKS_WORDS = ["thanks", "thank you", "thx", "appreciate it"];
+const BYE_WORDS = ["bye", "goodbye", "see you", "take care"];
+const CANCEL_WORDS = ["cancel", "nevermind", "never mind", "stop", "forget it", "start over", "restart"];
+
+function matchesAny(text, words) {
+  const lower = text.toLowerCase().trim();
+  return words.some(w => {
+    if (lower === w) return true;
+    const escaped = w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const re = new RegExp(`(^|\\s)${escaped}(\\s|[.,!?]|$)`);
+    return re.test(lower);
+  });
+}
+
+function addMessage(text, from) {
+  const chatArea = document.getElementById("chat-area");
+  const wrapper = document.createElement("div");
+  wrapper.className = `msg ${from}`;
+  wrapper.innerHTML = `<div class="msg-content"><div class="bubble">${escapeHtml(text)}</div></div>`;
+  chatArea.appendChild(wrapper);
+  chatArea.scrollTop = chatArea.scrollHeight;
+}
+
+function escapeHtml(text) {
+  const div = document.createElement("div");
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+function setTyping(on) {
+  document.getElementById("typing").style.visibility = on ? "visible" : "hidden";
+}
+
+function setQuickReplies(options) {
+  const qr = document.getElementById("quick-replies");
+  qr.innerHTML = options.map(o => `<div class="chip" onclick="handleChipClick('${o.replace(/'/g, "\\'")}')">${o}</div>`).join("");
+}
+
+function handleChipClick(text) {
+  document.getElementById("user-input").value = text;
+  handleUserInput();
+}
+
+async function handleUserInput() {
+  if (isSubmitting) return;
+  const input = document.getElementById("user-input");
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = "";
+  addMessage(text, "user");
+  setQuickReplies([]);
+
+  if (matchesAny(text, CANCEL_WORDS)) {
+    if (hasActiveRequest) {
+      sessionId = newSessionId();
+      hasActiveRequest = false;
+      setTyping(true);
+      setTimeout(() => {
+        setTyping(false);
+        addMessage("No problem, I've cancelled that — nothing was changed. Anything else I can help with?", "bot");
+        showDefaultChips();
+      }, 350);
+    } else {
+      setTyping(true);
+      setTimeout(() => {
+        setTyping(false);
+        addMessage("There's nothing in progress to cancel, but I'm here whenever you need something!", "bot");
+        showDefaultChips();
+      }, 350);
+    }
+    return;
+  }
+
+  if (!hasActiveRequest && matchesAny(text, GREETING_WORDS)) {
+    setTyping(true);
+    setTimeout(() => {
+      setTyping(false);
+      addMessage("Hi there! I can help with fee reversals, credit limit increases, or card replacement. Which do you need?", "bot");
+      showDefaultChips();
+    }, 350);
+    return;
+  }
+
+  if (!hasActiveRequest && matchesAny(text, THANKS_WORDS)) {
+    setTyping(true);
+    setTimeout(() => {
+      setTyping(false);
+      addMessage("You're very welcome! Let me know if there's anything else.", "bot");
+      showDefaultChips();
+    }, 350);
+    return;
+  }
+
+  if (!hasActiveRequest && matchesAny(text, BYE_WORDS)) {
+    setTyping(true);
+    setTimeout(() => {
+      setTyping(false);
+      addMessage("Take care! Come back anytime you need help with your card.", "bot");
+      setQuickReplies([]);
+    }, 350);
+    return;
+  }
+
+  hasActiveRequest = true;
+  isSubmitting = true;
+  document.getElementById("send-btn").disabled = true;
+  setTyping(true);
+
+  try {
+    const res = await fetch(`${API_BASE}/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: sessionId, text }),
+    });
+    const data = await res.json();
+    setTyping(false);
+
+    if (!res.ok) {
+      addMessage(data.detail || "Something went wrong - please try again.", "bot");
+    } else {
+      addMessage(data.fulfillment_text || "I'm not sure how to respond to that. Could you rephrase?", "bot");
+
+      if (data.all_required_params_present) {
+        hasActiveRequest = false;
+        setTimeout(showDefaultChips, 400);
+      }
+    }
+  } catch (e) {
+    setTyping(false);
+    addMessage("I couldn't reach the servicing system right now. Please try again in a moment.", "bot");
+  } finally {
+    isSubmitting = false;
+    document.getElementById("send-btn").disabled = false;
+  }
+}
+
+function showDefaultChips() {
+  setQuickReplies(["I want to reverse a fee", "I want to increase my credit limit", "I lost my card"]);
+}
+
+addMessage("Hi! How can I help today?", "bot");
+showDefaultChips();
+</script>
+
+</body>
+</html>

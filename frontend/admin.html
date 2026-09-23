@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Card Servicing — Admin</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --border: #2a2e38;
+    --text: #e6e8eb; --muted: #9aa1ac; --accent: #4f8cff; --success: #4caf7d;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--bg); color: var(--text); padding: 32px; max-width: 700px; margin: 0 auto;
+  }
+  h1 { font-size: 20px; margin-bottom: 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 28px; }
+  .panel {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; padding: 24px; margin-bottom: 24px;
+  }
+  label { display: block; font-size: 12px; color: var(--muted); margin: 14px 0 6px; }
+  label:first-child { margin-top: 0; }
+  input, select {
+    width: 100%; padding: 10px 12px; border-radius: 8px;
+    border: 1px solid var(--border); background: #0f1115; color: var(--text); font-size: 14px;
+  }
+  button {
+    margin-top: 20px; background: var(--accent); color: white; border: none;
+    padding: 12px 20px; border-radius: 8px; font-size: 14px; cursor: pointer; width: 100%;
+  }
+  button:hover { opacity: 0.9; }
+  .result { margin-top: 16px; font-size: 13px; padding: 12px; border-radius: 8px; }
+  .result.ok { background: #16261e; color: var(--success); border: 1px solid #234a34; }
+  .result.err { background: #241a1a; color: #ff9d9d; border: 1px solid #4a2a2a; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); font-size: 13px; }
+  th { color: var(--muted); font-weight: 500; text-transform: uppercase; font-size: 11px; }
+  .section-title { font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin: 32px 0 12px; }
+</style>
+</head>
+<body>
+
+<h1>Add New Card Member</h1>
+<div class="sub">Creates a member record + their first card, ready to use in the chatbot immediately.</div>
+
+<div class="panel">
+  <label>Full Name</label>
+  <input id="full_name" placeholder="e.g. Priya Sharma">
+
+  <label>Email</label>
+  <input id="email" placeholder="e.g. priya.sharma@example.com">
+
+  <label>Account Age (years ago it was opened)</label>
+  <input id="account_age" type="number" step="0.1" value="1.0">
+
+  <label>Credit Score Band</label>
+  <select id="credit_band">
+    <option value="excellent">Excellent</option>
+    <option value="good" selected>Good</option>
+    <option value="fair">Fair</option>
+    <option value="poor">Poor</option>
+  </select>
+
+  <label>Missed Payments (last 90 days)</label>
+  <input id="missed_payments" type="number" value="0">
+
+  <label>Initial Credit Limit (₹)</label>
+  <input id="credit_limit" type="number" value="50000">
+
+  <label>Card Last 4 Digits</label>
+  <input id="last_four" maxlength="4" placeholder="e.g. 4821">
+
+  <button onclick="submitMember()">Create Member</button>
+  <div id="result"></div>
+</div>
+
+<div class="section-title">Existing Members</div>
+<div class="panel">
+  <table id="members-table"><tbody><tr><td>Loading...</td></tr></tbody></table>
+</div>
+
+<script>
+const API_BASE = "http://localhost:8000";
+
+async function submitMember() {
+  const resultEl = document.getElementById("result");
+  resultEl.innerHTML = "";
+
+  const payload = {
+    full_name: document.getElementById("full_name").value.trim(),
+    email: document.getElementById("email").value.trim(),
+    account_opened_years_ago: parseFloat(document.getElementById("account_age").value) || 1.0,
+    credit_score_band: document.getElementById("credit_band").value,
+    missed_payments_90d: parseInt(document.getElementById("missed_payments").value) || 0,
+    initial_credit_limit: parseFloat(document.getElementById("credit_limit").value) || 50000,
+    card_last_four: document.getElementById("last_four").value.trim() || "0000",
+  };
+
+  if (!payload.full_name || !payload.email) {
+    resultEl.innerHTML = `<div class="result err">Name and email are required.</div>`;
+    return;
+  }
+
+  try {
+    const res = await fetch(`${API_BASE}/admin/members`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      resultEl.innerHTML = `<div class="result err">${data.detail || "Something went wrong."}</div>`;
+      return;
+    }
+
+    resultEl.innerHTML = `<div class="result ok">Created ${data.full_name} (${data.email}). They can now use the chatbot right away.</div>`;
+    ["full_name","email","last_four"].forEach(id => document.getElementById(id).value = "");
+    loadMembers();
+  } catch (e) {
+    resultEl.innerHTML = `<div class="result err">Couldn't reach the backend. Is uvicorn running on port 8000?</div>`;
+  }
+}
+
+async function loadMembers() {
+  const table = document.getElementById("members-table");
+  try {
+    const res = await fetch(`${API_BASE}/admin/members`);
+    const data = await res.json();
+    if (data.members.length === 0) {
+      table.innerHTML = `<tr><td>No members yet.</td></tr>`;
+      return;
+    }
+    table.innerHTML = `
+      <thead><tr><th>Name</th><th>Email</th><th>Card</th><th>Limit</th></tr></thead>
+      <tbody>
+        ${data.members.map(m => `
+          <tr>
+            <td>${m.full_name}</td>
+            <td>${m.email}</td>
+            <td>${m.card_number_masked || '—'}</td>
+            <td>₹${m.credit_limit ? Number(m.credit_limit).toLocaleString() : '—'}</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    `;
+  } catch (e) {
+    table.innerHTML = `<tr><td>Couldn't load members - is the backend running?</td></tr>`;
+  }
+}
+
+loadMembers();
+</script>
+
+</body>
+</html>
